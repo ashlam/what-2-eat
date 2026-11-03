@@ -272,21 +272,41 @@ cd android
 | JDK 11+ | `javac` 编 Java，`java` 跑 d8 / apksigner |
 | `python3` 或 `zip` | 把 `classes.dex` 塞进 APK |
 
-脚本找东西的顺序：`ANDROID_HOME` / `ANDROID_SDK_ROOT` → **本目录下的 `.sdk`** → 各平台默认目录
+脚本找东西的顺序：`ANDROID_HOME` / `ANDROID_SDK_ROOT` → `ANDROID_BASE`（默认 `/opt/data/android-build/tools`，
+NAS 上那套）→ **本目录下的 `.sdk`** → 各平台默认目录
 （`~/Android/Sdk`、`~/Library/Android/sdk`、`%LOCALAPPDATA%\Android\Sdk`、`/opt/android-sdk`）；
-JDK 先看 `JAVA_HOME`、`PATH`，再扫 **`.jdk/`**、`.jre17/`、`/usr/lib/jvm`、`/Library/Java/JavaVirtualMachines`、
-`C:\Program Files\Java` 等常见位置，取版本最高的。
+JDK 先看 `JAVA_HOME`、`PATH`，再扫 `ANDROID_BASE/jdk*`、**`.jdk/`**、`.jre17/`、`/usr/lib/jvm`、
+`/Library/Java/JavaVirtualMachines`、`C:\Program Files\Java` 等常见位置，取版本最高的。
 `javac` 是 8 就用 `-source 1.8 -bootclasspath`，是 9+ 就自动切到 `--release 8 -classpath`。
 
 只有 JDK 8 的老机器也能用：`d8` / `apksigner` 是 class 55 的，必须 Java 11+ 来跑，
 所以脚本会优先用 `.jdk/` / `android/.jre17/` 里的新版 Java 执行它们，`javac` 仍用系统那个。
 
-**在没有 Android Studio 的 Linux 上（比如 NAS）**：
+**在 NAS 上（工具链在容器里）**：
+
+```bash
+cd android
+sh build.sh         # 出 build/what2eat-0.9.apk
+```
+
+这台 NAS 的 Android 工具链装在容器里（默认 `hermes-official`，里面 `/opt/data/android-build/tools` 放着
+JDK 17 + build-tools 35 + android-35，和 `games-box` 共用同一套）。宿主机 `/volume1` 与容器里挂的是**同一个路径**，
+所以 `build.sh` 发现本机没有工具链、但系统里有 `docker` 和 `/volume1` 时，会自己 `docker exec` 进那个容器、
+在同一个目录把脚本再跑一遍（`W2E_IN_CONTAINER=1` 防递归）。容器名不一样就指定：
+
+```bash
+W2E_CONTAINER=别的容器名 sh build.sh
+```
+
+工具链的 build-tools 只留了 `d8` / `apksigner` 两个包装脚本、没有 `lib/*.jar` 也没关系——
+脚本两种都认，缺 jar 就走包装脚本，并给它配好 `JAVA_HOME`。
+
+**不依赖容器、在干净的 Linux 上从零装**：
 
 ```bash
 cd android
 sh setup-sdk.sh     # 下 build-tools + platform + 一个 JDK 17，装进 android/.sdk、android/.jdk
-sh build.sh         # 出 build/what2eat-0.9.apk
+sh build.sh
 ```
 
 `setup-sdk.sh` 走的是「直接下两个官方 zip 解压」这条路，绕开了 `sdkmanager` 的三个麻烦：
