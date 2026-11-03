@@ -1,6 +1,10 @@
 # ---------------- 工具链（本机解压，体积大且与平台绑定） ----------------
 # 跑 d8 / apksigner 用的 JRE 17，126 MB，换机器自己解压一份即可
 android/.jre17/
+# setup-sdk.sh 下的 Android SDK（约 120 MB）和 JDK 17（约 300 MB），
+# 里面还有 .cache 存着下载的 zip
+android/.sdk/
+android/.jdk/
 
 # ---------------- 构建产物 ----------------
 # aapt2 / javac / d8 的中间产物

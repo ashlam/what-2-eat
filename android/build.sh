@@ -26,13 +26,17 @@ W() { if [ "$WIN" = 1 ] && command -v cygpath >/dev/null 2>&1; then cygpath -w "
 die() { printf '\xe2\x9c\x97 %s\n' "$*" >&2; exit 1; }
 
 # ---------------- Android SDK ----------------
+# 顺序：显式环境变量 → 本目录下的 .sdk（setup-sdk.sh 装的）→ 各平台默认位置
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [ -z "$SDK" ]; then
-  for c in "${LOCALAPPDATA:-}/Android/Sdk" "$HOME/Android/Sdk" "$HOME/Library/Android/sdk" "$HOME/android-sdk"; do
-    [ -d "$c" ] && { SDK="$c"; break; }
+  for c in .sdk "/opt/android-sdk" "/usr/lib/android-sdk" \
+    "${LOCALAPPDATA:-}/Android/Sdk" "$HOME/Android/Sdk" "$HOME/Library/Android/sdk" "$HOME/android-sdk"; do
+    if [ -n "$c" ] && [ -d "$c" ]; then SDK="$c"; break; fi
   done
 fi
-[ -n "$SDK" ] && [ -d "$SDK" ] || die "找不到 Android SDK。先 export ANDROID_HOME=/path/to/android-sdk"
+[ -n "$SDK" ] && [ -d "$SDK" ] || die "找不到 Android SDK。
+  在这个目录跑一次：sh setup-sdk.sh   （自动下 build-tools + platform，约 120MB）
+  或者 export ANDROID_HOME=/path/to/android-sdk"
 
 # build-tools：优先 34.0.0（一直用它，别无缘无故换），没有就用版本号最大的
 BT=""
@@ -78,6 +82,8 @@ JDK_CANDS="$( {
     printf '%s\n' "$(dirname "$(dirname "$(command -v javac)")")"
   fi
   for d in \
+    "$PWD"/.jdk/* \
+    "$PWD"/.jre17/* \
     "/c/Program Files/Java"/* \
     "/c/Program Files/Eclipse Adoptium"/* \
     "/c/Program Files/Microsoft"/* \
@@ -102,14 +108,15 @@ done
 IFS="$_oldifs"
 
 [ -n "$JAVAC" ] || die "找不到 javac。装个 JDK（Debian/Ubuntu: sudo apt install openjdk-17-jdk-headless；
-  macOS: brew install openjdk），或者 export JAVA_HOME=/path/to/jdk"
+  macOS: brew install openjdk），或者 export JAVA_HOME=/path/to/jdk，
+  或者在本目录跑 sh setup-sdk.sh 让它连 JDK 一起装进 android/.jdk"
 JDKBIN="$(dirname "$JAVAC")"
 KEYTOOL="$JDKBIN/keytool$EXE"
 [ -x "$KEYTOOL" ] || die "找不到 keytool，应该在 $JDKBIN 旁边"
 
 # 跑 jar 的 JVM：d8 / apksigner 是 class 55 的，必须 Java 11+
 RUNJAVA=""
-for c in .jre17/*/bin/java$EXE "$JDKBIN/java$EXE" "${JAVA_HOME:+$JAVA_HOME/bin/java$EXE}" "$(command -v java 2>/dev/null || true)"; do
+for c in .jdk/*/bin/java$EXE .jre17/*/bin/java$EXE "$JDKBIN/java$EXE" "${JAVA_HOME:+$JAVA_HOME/bin/java$EXE}" "$(command -v java 2>/dev/null || true)"; do
   [ -n "$c" ] && [ -x "$c" ] || continue
   if [ "$(major_of "$c")" -ge 11 ]; then RUNJAVA="$c"; break; fi
 done

@@ -272,33 +272,53 @@ cd android
 | JDK 11+ | `javac` 编 Java，`java` 跑 d8 / apksigner |
 | `python3` 或 `zip` | 把 `classes.dex` 塞进 APK |
 
-脚本找东西的顺序：`ANDROID_HOME` / `ANDROID_SDK_ROOT` → 各平台默认目录（`~/Android/Sdk`、
-`~/Library/Android/sdk`、`%LOCALAPPDATA%\Android\Sdk`）；JDK 先看 `JAVA_HOME`、`PATH`，
-再扫 `/usr/lib/jvm`、`/Library/Java/JavaVirtualMachines`、`C:\Program Files\Java` 等常见位置，取版本最高的。
+脚本找东西的顺序：`ANDROID_HOME` / `ANDROID_SDK_ROOT` → **本目录下的 `.sdk`** → 各平台默认目录
+（`~/Android/Sdk`、`~/Library/Android/sdk`、`%LOCALAPPDATA%\Android\Sdk`、`/opt/android-sdk`）；
+JDK 先看 `JAVA_HOME`、`PATH`，再扫 **`.jdk/`**、`.jre17/`、`/usr/lib/jvm`、`/Library/Java/JavaVirtualMachines`、
+`C:\Program Files\Java` 等常见位置，取版本最高的。
 `javac` 是 8 就用 `-source 1.8 -bootclasspath`，是 9+ 就自动切到 `--release 8 -classpath`。
 
 只有 JDK 8 的老机器也能用：`d8` / `apksigner` 是 class 55 的，必须 Java 11+ 来跑，
-所以脚本会优先用 `android/.jre17/` 里的 JRE 执行它们，`javac` 仍用系统那个。
+所以脚本会优先用 `.jdk/` / `android/.jre17/` 里的新版 Java 执行它们，`javac` 仍用系统那个。
 
 **在没有 Android Studio 的 Linux 上（比如 NAS）**：
 
 ```bash
-sudo apt install -y openjdk-17-jdk-headless unzip curl
+cd android
+sh setup-sdk.sh     # 下 build-tools + platform + 一个 JDK 17，装进 android/.sdk、android/.jdk
+sh build.sh         # 出 build/what2eat-0.9.apk
+```
 
-# 1. 装 Android 命令行工具（一次性）
-mkdir -p ~/android-sdk/cmdline-tools && cd ~/android-sdk/cmdline-tools
-curl -LO https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-unzip -q commandlinetools-linux-*.zip && mv cmdline-tools latest
+`setup-sdk.sh` 走的是「直接下两个官方 zip 解压」这条路，绕开了 `sdkmanager` 的三个麻烦：
+它自己就得 JDK 17 才能启动、要交互同意 licenses、只认 `dl.google.com` 一个源。
+默认源是 `dl.google.com`，不通就自动退到腾讯云镜像；也可以自己指定：
 
-# 2. 装 build-tools 和 platform（许可证用 yes 一路同意）
+```bash
+W2E_SDK_MIRROR=https://你的镜像/android/repository sh setup-sdk.sh
+sh setup-sdk.sh --sdk-only   # 机器上已经有 JDK 11+，只补 SDK
+sh setup-sdk.sh --force      # 删掉重下
+```
+
+装完就是这样两个目录（都在 `.gitignore` 里，不入库，约 400 MB）：
+
+```
+android/.sdk/build-tools/34.0.0/{aapt2, zipalign, lib/d8.jar, lib/apksigner.jar}
+android/.sdk/platforms/android-34/android.jar
+android/.jdk/jdk-17.0.x+y/
+```
+
+`build.sh` 会自动用它们，**不用 export 任何变量**。不想留了 `rm -rf .sdk .jdk` 即可。
+
+如果你更习惯系统级安装（机器上本来就有 `sdkmanager`），原路子也还能走：
+
+```bash
 export ANDROID_HOME=$HOME/android-sdk
-export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
 yes | sdkmanager --licenses >/dev/null
 sdkmanager "build-tools;34.0.0" "platforms;android-34"
-
-# 3. 打
-cd ~/what-2-eat/android && ./build.sh
 ```
+
+> 注意 `platforms;android-34` 在 Google 仓库里的实际文件名是 `platform-34-ext7_r03.zip`
+> （`platform-34_r03.zip` 是 404），手动下载的话别下错。
 
 脚本是 POSIX 兼容的，`sh build.sh` / `bash build.sh` 都能跑（Debian 上 `sh` 是 dash，
 没在这里面用 bash 专有语法）。
