@@ -264,9 +264,47 @@ cd android
 | 4 | `d8` | class → `classes.dex`，塞回 APK |
 | 5 | `zipalign` + `apksigner` | 4 字节对齐 + 签名（首次自动生成 keystore） |
 
-**环境要求**：Android SDK（build-tools 34 + platforms/android-34）+ 一个 JDK。
-注意 `d8` / `apksigner` 是 class 55 的，**必须 Java 11+** 才跑得起来——而这台机器只有 JDK 8，
-所以脚本会去找 `android/.jre17/` 里的 JRE。换机器时把任意 JRE 11+ 解压到那个目录即可（已在 `.gitignore` 里）。
+**环境要求**（Windows / Linux / macOS 都行，脚本自己认平台，不用改代码）：
+
+| 要什么 | 用途 |
+| --- | --- |
+| Android SDK | `build-tools`（aapt2、zipalign、lib/d8.jar、lib/apksigner.jar）+ `platforms/android-34`；路径用 `ANDROID_HOME` 指过去 |
+| JDK 11+ | `javac` 编 Java，`java` 跑 d8 / apksigner |
+| `python3` 或 `zip` | 把 `classes.dex` 塞进 APK |
+
+脚本找东西的顺序：`ANDROID_HOME` / `ANDROID_SDK_ROOT` → 各平台默认目录（`~/Android/Sdk`、
+`~/Library/Android/sdk`、`%LOCALAPPDATA%\Android\Sdk`）；JDK 先看 `JAVA_HOME`、`PATH`，
+再扫 `/usr/lib/jvm`、`/Library/Java/JavaVirtualMachines`、`C:\Program Files\Java` 等常见位置，取版本最高的。
+`javac` 是 8 就用 `-source 1.8 -bootclasspath`，是 9+ 就自动切到 `--release 8 -classpath`。
+
+只有 JDK 8 的老机器也能用：`d8` / `apksigner` 是 class 55 的，必须 Java 11+ 来跑，
+所以脚本会优先用 `android/.jre17/` 里的 JRE 执行它们，`javac` 仍用系统那个。
+
+**在没有 Android Studio 的 Linux 上（比如 NAS）**：
+
+```bash
+sudo apt install -y openjdk-17-jdk-headless unzip curl
+
+# 1. 装 Android 命令行工具（一次性）
+mkdir -p ~/android-sdk/cmdline-tools && cd ~/android-sdk/cmdline-tools
+curl -LO https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+unzip -q commandlinetools-linux-*.zip && mv cmdline-tools latest
+
+# 2. 装 build-tools 和 platform（许可证用 yes 一路同意）
+export ANDROID_HOME=$HOME/android-sdk
+export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+yes | sdkmanager --licenses >/dev/null
+sdkmanager "build-tools;34.0.0" "platforms;android-34"
+
+# 3. 打
+cd ~/what-2-eat/android && ./build.sh
+```
+
+脚本是 POSIX 兼容的，`sh build.sh` / `bash build.sh` 都能跑（Debian 上 `sh` 是 dash，
+没在这里面用 bash 专有语法）。
+
+产物在 `android/build/what2eat-0.9.apk`，**不入库**（`.gitignore` 里有 `*.apk`）。
+想换个 build-tools 版本，`BT_VERSION=35.0.0 ./build.sh` 即可。
 
 **壳为什么这么写**（`android/java/…/MainActivity.java`）：
 
