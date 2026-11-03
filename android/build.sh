@@ -41,28 +41,55 @@ fi
 
 # NAS 上这套工具链装在容器里（/opt/data/android-build/tools），宿主机上只有 /volume1。
 # 两边挂的是同一个路径，所以直接 docker exec 进容器、在同一个目录再跑一次自己即可。
-# 用 W2E_IN_CONTAINER=1 挡住递归。
+# 用 W2E_IN_CONTAINER=1 挡住递归。docker 需要 sudo 的机器也认（sudo 有密码时请直接 sudo sh build.sh）。
 in_container() {
   [ -z "${W2E_IN_CONTAINER:-}" ] || return 1
   [ -d /volume1 ] || return 1
   command -v docker >/dev/null 2>&1 || return 1
   printf '\xe2\x9c\x97 %s\n' "$1" >&2
   printf '   本机没有工具链，但看到 /volume1 了，转进容器里执行…\n'
+
+  # docker 可能得用 sudo
+  _dc=""
+  if docker info >/dev/null 2>&1; then
+    _dc="docker"
+  elif command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    _dc="sudo -n docker"
+  else
+    printf '   ⚠ docker 命令用不了，错误信息：\n' >&2
+    docker info 2>&1 | head -3 | sed 's/^/     /' >&2
+    printf '   手动跑（容器名按 docker ps 里的实际名字换）：\n' >&2
+    printf "   sudo docker exec -it %s bash -lc 'cd %s && sh build.sh'\n" "${W2E_CONTAINER:-hermes-official}" "$PWD" >&2
+    return 1
+  fi
+  printf '   用 %s\n' "$_dc"
+
   _names="${W2E_CONTAINER:-} hermes-official"
-  for _n in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
+  for _n in $($_dc ps --format '{{.Names}}' 2>/dev/null || true); do
     case " $_names " in *" $_n "*) ;; *) _names="$_names $_n" ;; esac
   done
+  _tried=""
   for _n in $_names; do
     [ -n "$_n" ] || continue
-    docker exec "$_n" sh -c 'ls /opt/data/android-build/tools/build-tools/*/aapt2 >/dev/null 2>&1' 2>/dev/null || continue
-    printf '   用容器 [%s]\n' "$_n"
-    if docker exec -i -e W2E_IN_CONTAINER=1 "$_n" bash -lc "cd '$PWD' && sh build.sh"; then
+    case " $_tried " in *" $_n "*) continue ;; esac
+    _tried="$_tried $_n"
+    _err="$($_dc exec "$_n" sh -c 'ls /opt/data/android-build/tools/build-tools/*/aapt2' 2>&1)" || {
+      # 停着的容器也提一句，省得干瞪眼
+      if $_dc ps -a --format '{{.Name}} {{.State}}' 2>/dev/null | grep -q "^$_n .*\(exited\|created\)"; then
+        printf '   容器 [%s] 是停着的，先 %s start %s\n' "$_n" "$_dc" "$_n" >&2
+      else
+        printf '   容器 [%s] 跳过：%s\n' "$_n" "$(printf '%s' "$_err" | head -1)" >&2
+      fi
+      continue
+    }
+    printf '   用容器 [%s]：%s\n' "$_n" "$(printf '%s' "$_err" | head -1)"
+    if $_dc exec -i -e W2E_IN_CONTAINER=1 "$_n" bash -lc "cd '$PWD' && sh build.sh"; then
       return 0
     fi
     printf '   容器里也没跑通，看上面的报错。\n' >&2
     return 1
   done
-  printf '   没找到带 Android 工具链的容器。手动指定：W2E_CONTAINER=容器名 sh build.sh\n' >&2
+  printf '   没找到带 Android 工具链的容器（试过：%s）。指定：W2E_CONTAINER=容器名 sh build.sh\n' "$_tried" >&2
   return 1
 }
 
