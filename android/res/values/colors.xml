@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 跟网页的 cream 底色 / theme-color 对齐，启动时不会闪一下白 -->
+    <color name="app_bg">#F4F1E9</color>
+    <color name="icon_bg">#2E4A3A</color>
+</resources>

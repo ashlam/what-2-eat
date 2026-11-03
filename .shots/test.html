@@ -1,0 +1,480 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>test</title>
+<style>body{font:14px/1.6 monospace;background:#fff;color:#111;padding:16px;white-space:pre-wrap}</style>
+</head><body>
+<div id="out">running…</div>
+<iframe id="f" src="http://127.0.0.1:5188/index.html?t=1" style="width:390px;height:844px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('out');
+const log = [];
+let pass = 0, fail = 0;
+function ok(name, cond, extra) {
+  if (cond) { pass++; log.push('PASS ' + name); }
+  else { fail++; log.push('FAIL ' + name + (extra ? ' → ' + extra : '')); }
+}
+const f = document.getElementById('f');
+let started = false;
+f.onload = () => {
+  try {
+    const w = f.contentWindow;
+    if (!w.sessionStorage.getItem('t-reset')) {
+      w.localStorage.removeItem('w2e.state.v1');
+      w.sessionStorage.setItem('t-reset', '1');
+      w.location.reload();
+      return;
+    }
+  } catch (e) { }
+  if (started) return;
+  started = true;
+  setTimeout(run, 420);
+};
+
+function run() {
+  try {
+    const w = f.contentWindow, d = f.contentDocument;
+    const S = () => w.W2E_APP.state;
+    const click = sel => { const el = d.querySelector(sel); if (!el) throw new Error('找不到 ' + sel); el.click(); };
+    const all = sel => Array.from(d.querySelectorAll(sel));
+    const byText = (sel, t) => all(sel).find(el => el.textContent.includes(t));
+    const input = (sel, val) => {
+      const el = d.querySelector(sel); if (!el) throw new Error('找不到输入框 ' + sel);
+      el.value = val; el.dispatchEvent(new w.Event('input', { bubbles: true }));
+    };
+
+    /* ---------- 1. 首页只有冰箱 ---------- */
+    ok('首页就是冰箱（关门）', !!d.querySelector('.fr-unit.is-closed'));
+    ok('门上有三张标签纸', d.querySelectorAll('.fr-note').length === 3, d.querySelectorAll('.fr-note').length);
+    ok('标签是「冰箱存货 / 能做啥 / 录入菜谱」',
+      /冰箱存货/.test(d.querySelector('.note-a').textContent)
+      && /能做啥/.test(d.querySelector('.note-b').textContent)
+      && /录入菜谱/.test(d.querySelector('.note-c').textContent));
+    ok('底部有打开冰箱 / 放入食材', d.querySelectorAll('.fs-ops .op-btn').length === 2);
+    ok('首页不再有长列表', !d.querySelector('.item-row') && !d.querySelector('#itemList'));
+    ok('库存已初始化', S().items.length > 15, S().items.length);
+
+    /* ---------- 2. 开门 + 冷藏 / 冷冻（左右滑） ---------- */
+    click('[data-act="toggle-door"]');
+    ok('开门后是内胆', !!d.querySelector('.fr-unit.is-open'));
+    ok('默认停在冷藏室', d.querySelector('.fr-zonebar .on').textContent.includes('冷藏'));
+    ok('两页：冷藏 + 冷冻', d.querySelectorAll('.fr-page').length === 2);
+    const coldItems = d.querySelectorAll('.fr-page[data-zone="冷藏"] .fr-item').length;
+    ok('冷藏室摆出了食材', coldItems > 0, coldItems);
+
+    const grid = d.querySelector('.fr-page[data-zone="冷藏"] .fr-grid');
+    const cols = w.getComputedStyle(grid).gridTemplateColumns.split(' ').length;
+    ok('每行 5 个', cols === 5, cols);
+    const rowH = parseFloat(w.getComputedStyle(grid).gridAutoRows);
+    const cavBody = d.querySelector('.fr-page[data-zone="冷藏"] .fr-cav-body');
+    ok('一屏能放 4 行', cavBody.clientHeight >= rowH * 4 - 1,
+      `行高 ${rowH} × 4 vs 可视 ${cavBody.clientHeight}`);
+    ok('格子里再多了可以上下滚', w.getComputedStyle(cavBody).overflowY === 'auto');
+
+    // 手指横滑 = 改 scrollLeft（无头环境直接模拟，scroll 事件同步派发）
+    const pager = d.querySelector('#frPager');
+    ok('两页正好各占一屏宽（不会露半页）',
+      Math.abs(pager.scrollWidth - pager.clientWidth * 2) < 3,
+      `scrollWidth ${pager.scrollWidth} / clientWidth ${pager.clientWidth}`);
+    pager.scrollLeft = pager.clientWidth;
+    pager.dispatchEvent(new w.Event('scroll'));
+    ok('左右滑到冷冻，标签跟着切', d.querySelector('.fr-zonebar .on').textContent.includes('冷冻'));
+
+    /* ---------- 2b. 调料区 ---------- */
+    ok('有独立的调料区', !!d.querySelector('.fr-cond'));
+    const condItems = d.querySelectorAll('.fr-cond .fr-cond-item').length;
+    ok('调料都在调料区', condItems > 5, condItems);
+    const seasonInPages = all('.fr-page .fr-item').filter(el =>
+      /^(盐|生抽|老抽|食用油|小葱|大蒜|姜|醋|糖)$/.test(el.querySelector('.fr-nm').textContent.trim()));
+    ok('调料不占冷藏 / 冷冻的格位', seasonInPages.length === 0,
+      seasonInPages.map(x => x.querySelector('.fr-nm').textContent).join(','));
+
+    const saltBtn = byText('.fr-cond .fr-cond-item', '盐');
+    ok('调料也能点开编辑', !!saltBtn);
+    saltBtn.click();
+    const fixed = d.querySelector('.ed-fixed');
+    ok('调料只能放调料区（层位不可选）',
+      !!fixed && /调料区/.test(fixed.textContent) && d.querySelectorAll('[data-act="edit-zone"]').length === 0,
+      fixed ? fixed.textContent.trim() : '没找到 .ed-fixed');
+    click('[data-act="close-sheet"]');
+
+    /* ---------- 2c. 零食是分类，不是独立货架 ---------- */
+    ok('架子上只剩调料区，不再有零食 pill',
+      !d.querySelector('.fr-rack-head .rk')
+      && /调料区/.test((d.querySelector('.fr-rack-head .rk-title') || {}).textContent || ''));
+
+    // 加一个零食「冰淇淋」：分类归零食，但按冰品落进冷冻室、照样占格
+    click('[data-act="go-catalog"]');
+    click('.ct-custom');
+    input('#cfName', '冰淇淋');
+    ok('冰品自动归到零食类', d.querySelector('[data-act="cf-cat"][data-g="零食"]').classList.contains('on'));
+    click('[data-act="cf-add"]');
+    const ice = S().items.find(i => i.name === '冰淇淋');
+    ok('零食也占冷格：冰淇淋自动进冷冻室', !!ice && ice.zone === '冷冻' && ice.cat === '零食',
+      ice ? ice.zone + '/' + ice.cat : '没加进去');
+
+    // 同样是零食，巧克力应该落冷藏
+    click('.ct-custom');
+    input('#cfName', '巧克力');
+    click('[data-act="cf-add"]');
+    const choc = S().items.find(i => i.name === '巧克力');
+    ok('同为零食，巧克力自动落冷藏', !!choc && choc.zone === '冷藏' && choc.cat === '零食',
+      choc ? choc.zone + '/' + choc.cat : '没加进去');
+
+    // 回冰箱：两种零食各在各的格子里
+    click('[data-act="nav"][data-v="fridge"]');
+    if (!d.querySelector('.fr-item')) click('[data-act="toggle-door"]');
+    ok('冰淇淋出现在冷冻室',
+      all('.fr-page[data-zone="冷冻"] .fr-item').some(b => /冰淇淋/.test(b.textContent)));
+    ok('巧克力出现在冷藏室',
+      all('.fr-page[data-zone="冷藏"] .fr-item').some(b => /巧克力/.test(b.textContent)));
+
+    /* ---------- 3. 点食材就编辑 ---------- */
+    const eggBtn = byText('.fr-page[data-zone="冷藏"] .fr-item', '鸡蛋');
+    ok('能找到鸡蛋格子', !!eggBtn);
+    eggBtn.click();
+    ok('点开就是编辑面板', !!d.querySelector('#edName') && d.querySelector('#edName').value === '鸡蛋');
+    ok('面板里有数量 / 保质期 / 层位',
+      !!d.querySelector('#edQty') && !!d.querySelector('#edExpire') && d.querySelectorAll('[data-act="edit-zone"]').length === 2);
+
+    const q0 = Number(S().items.find(i => i.name === '鸡蛋').qty);
+    click('[data-act="edit-qty"][data-d="1"]');
+    click('[data-act="edit-save"]');
+    ok('改数量生效', Number(S().items.find(i => i.name === '鸡蛋').qty) === q0 + 1,
+      q0 + '→' + S().items.find(i => i.name === '鸡蛋').qty);
+
+    byText('.fr-page[data-zone="冷藏"] .fr-item', '鸡蛋').click();
+    click('[data-act="edit-zone"][data-z="冷冻"]');
+    click('[data-act="edit-save"]');
+    ok('挪到冷冻层生效', S().items.find(i => i.name === '鸡蛋').zone === '冷冻',
+      S().items.find(i => i.name === '鸡蛋').zone);
+
+    const mush = byText('.fr-page[data-zone="冷藏"] .fr-item', '香菇');
+    if (mush) mush.click();
+    click('[data-act="edit-del"]');
+    ok('删除有二次确认', d.getElementById('modalRoot').classList.contains('open'));
+    click('[data-act="del-confirm"]');
+    ok('删除生效', !S().items.some(i => i.name === '香菇'));
+
+    /* ---------- 4. 关门 → 标签纸入口 ---------- */
+    click('[data-act="toggle-door"]');
+    ok('关上冰箱', !!d.querySelector('.fr-unit.is-closed'));
+    ok('门上标了调料 / 零食数', /调料/.test(d.querySelector('.fr-cond-tag').textContent)
+      && /零食/.test(d.querySelector('.fr-cond-tag').textContent),
+      d.querySelector('.fr-cond-tag').textContent.trim());
+    click('.note-a');
+    ok('冰箱存货 → 存货页', !!d.querySelector('.st-list'));
+    ok('存货条数 = 库存样数',
+      d.querySelectorAll('.st-row').length === S().items.filter(i => i.qty > 0).length,
+      d.querySelectorAll('.st-row').length);
+    ok('存货页有 4 个分区筛选（零食不再单列）',
+      d.querySelectorAll('[data-act="stock-zone"]').length === 4
+      && !all('[data-act="stock-zone"]').some(b => /零食/.test(b.textContent)),
+      all('[data-act="stock-zone"]').map(b => b.dataset.z).join(','));
+    click('[data-act="stock-zone"][data-z="调料"]');
+    ok('能单独筛调料',
+      d.querySelectorAll('.st-row').length === S().items.filter(i => i.qty > 0 && i.zone === '调料').length,
+      d.querySelectorAll('.st-row').length);
+    click('[data-act="stock-zone"][data-z="全部"]');
+    input('#stockSearch', '鸡蛋');
+    ok('存货页能搜', d.querySelectorAll('.st-row').length === 1, d.querySelectorAll('.st-row').length);
+    d.querySelector('.st-row').click();
+    ok('存货点一条进编辑', !!d.querySelector('#edName'));
+    click('[data-act="close-sheet"]');
+
+    /* ---------- 5. 放入食材（多选 / 单放 / 合并） ---------- */
+    click('[data-act="go-catalog"]');
+    ok('打开食材库', !!d.querySelector('.cat-screen'));
+    ok('食材库列出系统支持的食材', d.querySelectorAll('.ct-row').length > 60, d.querySelectorAll('.ct-row').length);
+
+    const rowA = all('.ct-row').find(r => r.dataset.n === '南瓜');
+    const rowB = all('.ct-row').find(r => r.dataset.n === '冬瓜');
+    ok('食材库里能找到南瓜/冬瓜', !!rowA && !!rowB);
+    rowA.click(); rowB.click();
+    ok('多选计数显示 2', /已选 <b>2<\/b>/.test(d.querySelector('.cat-bar').innerHTML),
+      d.querySelector('.cb-info').textContent.trim());
+
+    const n0 = S().items.length;
+    click('[data-act="cat-add"]');
+    ok('多选一次放进冰箱', S().items.length === n0 + 2, n0 + '→' + S().items.length);
+    ok('新食材默认进冷藏', S().items.filter(i => i.name === '冬瓜').every(i => i.zone === '冷藏'));
+
+    const eggRow = all('.ct-row').find(r => r.dataset.n === '鸡蛋');
+    eggRow.click();
+    click('[data-act="cat-add"]');
+    ok('同名时弹合并确认', d.getElementById('modalRoot').classList.contains('open'));
+    const eggRows0 = S().items.filter(i => i.name === '鸡蛋').length;
+    click('[data-act="merge-no"]');
+    ok('选不合并：各存一条', S().items.filter(i => i.name === '鸡蛋').length === eggRows0 + 1,
+      eggRows0 + '→' + S().items.filter(i => i.name === '鸡蛋').length);
+
+    const sumQty = () => S().items.filter(i => i.name === '鸡蛋').reduce((a, b) => a + Number(b.qty), 0);
+    const sum0 = sumQty();
+    all('.ct-row').find(r => r.dataset.n === '鸡蛋').click();
+    click('[data-act="cat-add"]');
+    click('[data-act="merge-yes"]');
+    ok('选合并：数量相加', sumQty() === sum0 + 1, sum0 + '→' + sumQty());
+
+    const oneBtn = all('.ct-one').find(b => b.dataset.n === '牛奶');
+    ok('食材有「单放」按钮', !!oneBtn);
+    oneBtn.click();
+    ok('单放面板带好名称', d.querySelector('#edName').value === '牛奶');
+    click('[data-act="edit-days"][data-d="7"]');
+    click('[data-act="edit-save"]');
+    const milk = S().items.find(i => i.name === '牛奶');
+    ok('单放成功且记了保质期', !!milk && !!milk.expire, milk && milk.expire);
+
+    // 调料从食材库放进来，一律进调料区，不占冷藏 / 冷冻
+    all('.ct-row').find(r => r.dataset.n === '盐').click();
+    click('[data-act="cat-add"]');
+    if (d.getElementById('modalRoot').classList.contains('open')) click('[data-act="merge-yes"]');
+    ok('调料自动进调料区',
+      S().items.filter(i => i.name === '盐').every(i => i.zone === '调料'),
+      S().items.filter(i => i.name === '盐').map(i => i.zone).join(','));
+
+    /* ---------- 5b. 自定义食材 ---------- */
+    ok('食材库有「自己加一个」入口', !!d.querySelector('.ct-custom'));
+    click('.ct-custom');
+    ok('打开自定义面板', !!d.querySelector('#cfName'));
+
+    input('#cfName', '秋葵');
+    click('[data-act="cf-cat"][data-g="蔬菜"]');
+    click('[data-act="cf-icon"][data-i="🥦"]');
+    input('#cfUnit', '根');
+    input('#cfDays', '5');
+    click('[data-act="cf-save"]');
+
+    const cus = S().custom.find(x => x.name === '秋葵');
+    ok('存进了食材库', !!cus, JSON.stringify(S().custom));
+    ok('分类 / 单位 / 天数都记住了',
+      !!cus && cus.group === '蔬菜' && cus.unit === '根' && cus.days === 5, JSON.stringify(cus));
+    ok('面板关掉回到列表', !d.getElementById('sheetRoot').classList.contains('open'));
+
+    const cusRow = all('.ct-row').find(r => r.dataset.n === '秋葵');
+    ok('列表里立刻能看到', !!cusRow);
+    ok('自己加的带「我加的」标记', !!cusRow && /我加的/.test(cusRow.textContent),
+      cusRow && cusRow.textContent.trim());
+    ok('自动勾上等着放', !!cusRow && cusRow.classList.contains('on'));
+
+    click('[data-act="cat-add"]');
+    ok('自己加的也能放进冰箱',
+      S().items.some(i => i.name === '秋葵' && i.zone === '冷藏'),
+      S().items.filter(i => i.name === '秋葵').map(i => i.zone).join(','));
+
+    // 直接「放进冰箱」这条路，顺带验证调料分类自动去调料区
+    click('.ct-custom');
+    input('#cfName', '孜然粉');
+    ok('名字能猜出是调料', d.querySelector('[data-act="cf-cat"][data-g="调料"]').classList.contains('on'));
+    click('[data-act="cf-add"]');
+    ok('自定义调料直接进调料区',
+      S().items.filter(i => i.name === '孜然粉').every(i => i.zone === '调料'),
+      S().items.filter(i => i.name === '孜然粉').map(i => i.zone).join(','));
+
+    // 搜不到时，拿关键词一键变新食材
+    input('#catSearch', '马蹄');
+    const quickAdd = d.querySelector('[data-act="cat-custom"][data-name="马蹄"]');
+    ok('搜不到时给「加进来」按钮', !!quickAdd);
+    quickAdd.click();
+    ok('关键词自动填进面板', d.querySelector('#cfName').value === '马蹄');
+    click('[data-act="close-sheet"]');
+    input('#catSearch', '');
+
+    const delBtn = d.querySelector('.ct-del[data-n="孜然粉"]');
+    ok('自己加的能删掉', !!delBtn);
+    delBtn.click();
+    ok('删之前先确认', d.getElementById('modalRoot').classList.contains('open'));
+    click('[data-act="cf-del-yes"]');
+    ok('删完不在食材库', !S().custom.some(x => x.name === '孜然粉'));
+    ok('冰箱里那份不受影响', S().items.some(i => i.name === '孜然粉'));
+
+    // 自定义「零食」→ 只是个分类，照样占冷格（薯片落冷藏）
+    click('.ct-custom');
+    input('#cfName', '薯片');
+    ok('薯片自动归到零食', d.querySelector('[data-act="cf-cat"][data-g="零食"]').classList.contains('on'));
+    click('[data-act="cf-add"]');
+    const chips = S().items.filter(i => i.name === '薯片');
+    ok('零食照样进冷格：薯片落在冷藏',
+      chips.length > 0 && chips.every(i => i.zone === '冷藏' && i.cat === '零食'),
+      chips.map(i => i.zone + '/' + i.cat).join(','));
+
+    /* ---------- 6. 能做啥 ---------- */
+    click('[data-act="nav"][data-v="fridge"]');
+    // 先开门：薯片应该躺在冷藏格里，而不是单独一条架子
+    click('[data-act="toggle-door"]');
+    ok('冷藏页里能看到这包薯片',
+      all('.fr-page[data-zone="冷藏"] .fr-item').some(el => /薯片/.test(el.textContent)));
+    click('[data-act="toggle-door"]');
+    click('.note-b');
+    ok('能做啥 → 食谱列表', !!d.querySelector('#libList'));
+    ok('食谱列表有菜', d.querySelectorAll('#libList .pick-row').length > 0);
+
+    /* ---------- 7. 今天页 / 点菜 ---------- */
+    click('[data-act="nav"][data-v="today"]');
+    ok('进入今天页', !!d.querySelector('.meal-seg'));
+    click('[data-act="open-pick"]');
+    ok('点菜抽屉打开', !!d.querySelector('#pickList'));
+    all('#pickList .pick-row')[0].click();
+    click('[data-act="confirm-pick"]');
+    ok('确认后写入计划', Object.keys(S().plans).length > 0);
+    click('[data-act="set-meal"][data-m="晚餐"]');
+    ok('切到晚餐', d.querySelector('.meal-seg .on').textContent.trim() === '晚餐');
+
+    /* ---------- 8. 菜谱详情 / 买菜单 ---------- */
+    click('[data-act="set-meal"][data-m="午餐"]');
+    const rec = d.querySelector('.rec-card') || d.querySelector('.dish-card');
+    if (rec) {
+      rec.click();
+      ok('菜谱抽屉打开', !!d.querySelector('.rd-hero'));
+      const shopBtn = d.querySelector('[data-act="recipe-shop"]');
+      const shopBefore = S().shop.length;
+      if (shopBtn) { shopBtn.click(); ok('缺口进买菜单', S().shop.length > shopBefore); }
+      else ok('缺口进买菜单（本菜无缺口）', true);
+      click('[data-act="close-sheet"]');
+    } else {
+      ok('菜谱抽屉打开（今天没菜，跳过）', true);
+      ok('缺口进买菜单（跳过）', true);
+    }
+
+    click('[data-act="nav"][data-v="shop"]');
+    ok('买菜单页面', !!d.querySelector('.shop-row, .empty'));
+
+    /* ---------- 9. 汇总 / 我的 ---------- */
+    click('[data-act="nav"][data-v="summary"]');
+    ok('汇总页渲染', d.querySelectorAll('.day-cell').length === 7);
+    click('[data-act="nav"][data-v="me"]');
+    const p0 = S().prefs.people;
+    click('[data-act="people"][data-d="1"]');
+    ok('人数 +1', S().prefs.people === p0 + 1);
+    click('[data-act="avoid"][data-k="辣"]');
+    ok('忌口勾选', S().prefs.avoid.includes('辣'));
+    click('[data-act="avoid"][data-k="辣"]');
+
+    /* ---------- 10. 录入菜谱 ---------- */
+    click('[data-act="nav"][data-v="fridge"]');
+    click('[data-act="new-recipe"]');
+    ok('点标签纸打开录入面板', !!d.querySelector('#rfName'));
+    ok('面板里有分类 / 难度 / 用时', d.querySelectorAll('[data-act="rf-cat"]').length === 7
+      && d.querySelectorAll('[data-act="rf-level"]').length === 3
+      && d.querySelectorAll('[data-act="rf-time"]').length === 6);
+
+    input('#rfName', '外婆的红烧肉');
+    click('[data-act="rf-add"]');
+    ok('「添加食材」进选择器', !!d.querySelector('#rfPickSearch'));
+    input('#rfPickSearch', '五花肉');
+    const pr = d.querySelectorAll('.rf-picklist .rf-p');
+    ok('能搜到五花肉', pr.length >= 1 && /五花肉/.test(pr[0].textContent), pr.length);
+    pr[0].click();
+    ok('选完回到表单并加了一行', !!d.querySelector('#rfName') && d.querySelectorAll('.rf-ing').length === 1);
+
+    click('[data-act="rf-add"]');
+    input('#rfPickSearch', '土豆');
+    d.querySelector('.rf-picklist .rf-p').click();
+    ok('第二样也加上了', d.querySelectorAll('.rf-ing').length === 2);
+
+    const amt = d.querySelector('[data-input="rf-amt"][data-i="0"]');
+    amt.value = '500g';
+    amt.dispatchEvent(new w.Event('input', { bubbles: true }));
+
+    const r0 = d.querySelector('[data-act="rf-role"][data-i="1"]');
+    const wasMain = r0.classList.contains('on');
+    r0.click();
+    ok('主料 / 辅料能切换',
+      d.querySelector('[data-act="rf-role"][data-i="1"]').classList.contains('on') !== wasMain);
+    d.querySelector('[data-act="rf-role"][data-i="1"]').click();
+
+    click('[data-act="rf-cat"][data-c="硬菜"]');
+    click('[data-act="rf-time"][data-t="45"]');
+    input('[data-input="rf-steps"]', '五花肉切块，冷水下锅焯水\n炒糖色，下肉翻匀\n加水没过肉，小火炖 40 分钟');
+    click('[data-act="rf-save"]');
+
+    ok('保存后菜谱 +1', S().recipes.length === 1, S().recipes.length);
+    const mine = S().recipes[0] || { ing: [], steps: [] };
+    ok('名字 / 分类 / 用时都存对',
+      mine.name === '外婆的红烧肉' && mine.cat === '硬菜' && mine.time === 45,
+      `${mine.name}|${mine.cat}|${mine.time}`);
+    ok('食材带着用量和主辅标记',
+      mine.ing.some(i => i.n === '五花肉' && i.a === '500g' && i.m === 1),
+      JSON.stringify(mine.ing));
+    ok('步骤按行拆成 3 步', mine.steps.length === 3, mine.steps.length);
+    ok('存完跳到菜谱库', !!d.querySelector('#libList'));
+    ok('菜谱库里能看到它', /外婆的红烧肉/.test(d.querySelector('#libList').textContent));
+
+    // 详情：自家菜要有「我录的」标记和改 / 删入口
+    byText('#libList .pick-row', '外婆的红烧肉').click();
+    ok('自家菜谱详情能打开', !!d.querySelector('.rd-hero')
+      && /外婆的红烧肉/.test(d.querySelector('.rd-hero').textContent));
+    ok('详情标了「我录的」', /我录的/.test(d.querySelector('.rd-tags').textContent));
+    ok('详情有改 / 删入口',
+      !!d.querySelector('[data-act="rf-edit"]') && !!d.querySelector('[data-act="rf-del"]'));
+    ok('匹配引擎认得它（五花肉 + 土豆冰箱里都有）',
+      /主料齐了/.test(d.querySelector('.rd-lack').textContent),
+      d.querySelector('.rd-lack').textContent.trim());
+    click('[data-act="recipe-plan"]');
+    ok('自己录的菜能排进三餐',
+      Object.keys(S().plans).some(k => ['早餐', '午餐', '晚餐'].some(m =>
+        (S().plans[k][m] || []).some(x => x.id === mine.id))));
+
+    // 落盘：自录菜谱要能带走
+    w.dispatchEvent(new w.Event('pagehide'));
+    ok('自录菜谱也落盘了',
+      JSON.parse(w.localStorage.getItem('w2e.state.v1')).recipes.some(r => r.name === '外婆的红烧肉'));
+
+    // 删掉：二次确认 + 计划里跟着清
+    byText('#libList .pick-row', '外婆的红烧肉').click();
+    click('[data-act="rf-del"]');
+    ok('删菜谱有二次确认', d.getElementById('modalRoot').classList.contains('open'));
+    click('[data-act="rf-del-yes"]');
+    ok('删掉后从菜谱库消失', S().recipes.length === 0);
+    ok('计划里引用的也一起清掉了',
+      !Object.keys(S().plans).some(k => ['早餐', '午餐', '晚餐'].some(m =>
+        (S().plans[k][m] || []).some(x => x.id === mine.id))));
+
+    /* ---------- 10.5 手绘像素图标 ---------- */
+    click('[data-act="nav"][data-v="fridge"]');
+    if (!d.querySelector('.fr-item')) click('[data-act="toggle-door"]');
+    const fr = d.querySelector('.fr-item');
+    const frName = fr.querySelector('.fr-nm').textContent.trim();
+    fr.click();
+    ok('图标备选变多了（含冰淇淋）', d.querySelectorAll('.ed-icons button').length >= 56,
+      d.querySelectorAll('.ed-icons button').length);
+    ok('图标池末尾有「自己画」', !!d.querySelector('.ed-draw'));
+    click('.ed-draw');
+    ok('像素编辑器打开：16×16 = 256 格', d.querySelectorAll('.pix-cell').length === 256,
+      d.querySelectorAll('.pix-cell').length);
+    const tap = el => el.dispatchEvent(new w.PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    tap(d.querySelectorAll('.pix-cell')[13]);
+    tap(d.querySelectorAll('.pix-cell')[14]);
+    tap(d.querySelectorAll('.pix-cell')[26]);
+    ok('点格子能填色', d.querySelectorAll('.pix-cell')[13].style.background !== '');
+    click('[data-act="pix-undo"]');
+    ok('撤销收回最后一笔、前面的还在',
+      !d.querySelectorAll('.pix-cell')[26].style.background && !!d.querySelectorAll('.pix-cell')[13].style.background);
+    tap(d.querySelectorAll('.pix-cell')[26]);
+    tap(d.querySelectorAll('.pix-cell')[27]);
+    click('[data-act="pix-color"][data-c=""]');
+    tap(d.querySelectorAll('.pix-cell')[27]);
+    ok('橡皮能擦掉格子', !d.querySelectorAll('.pix-cell')[27].style.background);
+    ok('橡皮不会误伤别的格子', !!d.querySelectorAll('.pix-cell')[26].style.background);
+    click('[data-act="pix-done"]');
+    ok('确定后头像换成手绘图', /^data:image\/png/.test((d.querySelector('.ed-pic img') || {}).src || ''));
+    click('[data-act="edit-save"]');
+    const saved = S().items.find(i => i.name === frName);
+    ok('手绘图标存进了库存', !!saved && /^data:image\/png/.test(saved.icon || ''));
+    const cellNode = all('.fr-item').find(el => el.querySelector('.fr-nm').textContent.trim() === frName);
+    ok('冰箱格子里显示这张图', !!cellNode && !!cellNode.querySelector('.ico-img'));
+
+    /* ---------- 11. 持久化 ---------- */
+    // save() 有 60ms 防抖，测试是全同步跑的，得手动催一次落盘
+    w.dispatchEvent(new w.Event('pagehide'));
+    const raw = w.localStorage.getItem('w2e.state.v1');
+    ok('已写入 localStorage', !!raw && raw.length > 100);
+    ok('层位已落盘', JSON.parse(raw).items.some(i => i.zone === '冷冻'));
+    ok('自定义食材也落盘了', JSON.parse(raw).custom.some(c => c.name === '秋葵'));
+
+  } catch (e) {
+    fail++;
+    log.push('ERROR ' + e.message + '\n' + (e.stack || ''));
+  }
+  out.textContent = `pass=${pass} fail=${fail}\n\n` + log.join('\n');
+  document.title = `pass=${pass} fail=${fail}`;
+}
+</script>
+</body></html>

@@ -1,0 +1,50 @@
+# ---------------- 工具链（本机解压，体积大且与平台绑定） ----------------
+# 跑 d8 / apksigner 用的 JRE 17，126 MB，换机器自己解压一份即可
+android/.jre17/
+
+# ---------------- 构建产物 ----------------
+# aapt2 / javac / d8 的中间产物
+android/build/
+# build.sh 每次从根目录同步进去的网页副本，改了也不该看这里
+android/assets/www/
+# 打好的包：随时能重出，别让历史里堆二进制
+*.apk
+
+# ---------------- 签名密钥 ----------------
+# 自签名私钥（口令在 README 里），不入库。
+# 换机器编译时记得把本机的 keystore/what2eat.jks 一起带过去，
+# 否则 build.sh 会重新生成一把，签名一变就没法覆盖安装了。
+android/keystore/
+*.jks
+*.keystore
+*.p12
+
+# ---------------- 自测截图 ----------------
+# 测试页面（test*.html）要提交，截图只是留档，几百张 20 多 M
+.shots/*.png
+# shot.sh 每次运行都会重写的临时 iframe 外壳
+.shots/_wrap.html
+.shots/_profile/
+# 早期排查用的临时探针，不是正式用例
+.shots/probe.html
+.shots/probe4.html
+.shots/scene.html
+.shots/test-old.html
+
+# ---------------- 设计参考图 ----------------
+# 需求阶段的截图和参考 App 截图，属于输入材料，不是工程源码（3.8 MB）
+*.jpg
+*.jpeg
+
+# ---------------- 工作区助手数据 ----------------
+# 本地开发日志 / 记忆文件，跟着机器走
+.workbuddy/
+
+# ---------------- 系统 / 编辑器 ----------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~

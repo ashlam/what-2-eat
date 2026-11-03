@@ -1,0 +1,17 @@
+# 换行一律由这里定，别让各人的 core.autocrlf 打架
+* text=auto
+
+# shell 脚本必须 LF：CRLF 的 .sh 在 Git Bash / WSL 里会报 $'\r': command not found
+*.sh           text eol=lf
+# Windows 批处理反过来，必须 CRLF
+*.bat          text eol=crlf
+*.cmd          text eol=crlf
+
+# 二进制：别做行尾转换，也别在 diff 里当文本比
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.ico          binary
+*.apk          binary
+*.jar          binary
+*.jks          binary

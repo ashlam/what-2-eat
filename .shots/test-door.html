@@ -1,0 +1,75 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>test-door</title>
+<style>body{font:14px/1.6 monospace;background:#fff;color:#111;padding:16px;white-space:pre-wrap}</style>
+</head><body>
+<div id="out">running…</div>
+<iframe id="f" src="http://127.0.0.1:5188/index.html" style="width:390px;height:844px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('out');
+const log = [];
+let pass = 0, fail = 0;
+function ok(name, cond, extra) {
+  if (cond) { pass++; log.push('PASS ' + name); }
+  else { fail++; log.push('FAIL ' + name + (extra ? ' → ' + extra : '')); }
+}
+const f = document.getElementById('f');
+let phase = 0;
+
+f.onload = () => setTimeout(() => {
+  const w = f.contentWindow, d = f.contentDocument;
+  try {
+    if (phase === 0) {
+      /* 清一次存档，从干净状态开始 */
+      w.localStorage.removeItem('w2e.state.v1');
+      w.location.reload();
+      phase = 1;
+      return;
+    }
+
+    if (phase === 1) {
+      ok('首次打开是关门', !!d.querySelector('.fr-unit.is-closed'));
+      d.querySelector('[data-act="toggle-door"]').click();
+      ok('点一下能开门', !!d.querySelector('.fr-unit.is-open'));
+
+      /* 模拟「关掉页面」：触发 pagehide 强制落盘 */
+      w.dispatchEvent(new w.Event('pagehide'));
+      const raw = JSON.parse(w.localStorage.getItem('w2e.state.v1') || '{}');
+      ok('开门状态不写进存档', raw.prefs && raw.prefs.doorOpen === false,
+        'saved doorOpen=' + (raw.prefs && raw.prefs.doorOpen));
+
+      w.location.reload();
+      phase = 2;
+      return;
+    }
+
+    if (phase === 2) {
+      ok('重载后回到关门', !!d.querySelector('.fr-unit.is-closed'));
+      ok('重载后不残留内胆', !d.querySelector('.fr-unit.is-open'));
+
+      /* 老版本可能存了 doorOpen:true，硬写回去看会不会被它带跑 */
+      const s = JSON.parse(w.localStorage.getItem('w2e.state.v1') || '{}');
+      s.prefs = Object.assign({}, s.prefs, { doorOpen: true });
+      w.localStorage.setItem('w2e.state.v1', JSON.stringify(s));
+      w.location.reload();
+      phase = 3;
+      return;
+    }
+
+    if (phase === 3) {
+      ok('存档里是 true 也照旧关门启动', !!d.querySelector('.fr-unit.is-closed'));
+      ok('存档里是 true 也不显示内胆', !d.querySelector('.fr-unit.is-open'));
+      finish();
+    }
+  } catch (e) {
+    fail++;
+    log.push('ERROR ' + e.message + '\n' + (e.stack || ''));
+    finish();
+  }
+}, 480);
+
+function finish() {
+  out.textContent = `pass=${pass} fail=${fail}\n\n` + log.join('\n');
+  document.title = `pass=${pass} fail=${fail}`;
+}
+</script>
+</body></html>

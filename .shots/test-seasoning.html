@@ -1,0 +1,90 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>食材优先推荐 · 测试</title>
+<style>body{font:13px/1.6 monospace;background:#fff;color:#111;padding:16px;white-space:pre-wrap}
+#f{width:390px;height:844px;border:1px solid #ccc}</style>
+</head><body>
+<div id="out">running…</div>
+<iframe id="f" src="http://127.0.0.1:5188/index.html?ts=1" style="display:none"></iframe>
+<script>
+const out = document.getElementById('out');
+const log = []; let pass = 0, fail = 0;
+function ok(name, cond, extra) {
+  if (cond) { pass++; log.push('PASS ' + name); }
+  else { fail++; log.push('FAIL ' + name + (extra ? ' → ' + extra : '')); }
+}
+const f = document.getElementById('f');
+f.onload = () => setTimeout(run, 350);
+
+function run() {
+  try {
+    const w = f.contentWindow, d = f.contentDocument;
+    const S = () => w.W2E_APP.state;
+    const render = () => w.W2E_APP.render();
+    const click = sel => { const el = d.querySelector(sel); if (!el) throw new Error('找不到 ' + sel); el.click(); };
+    const text = sel => (d.querySelector(sel) || {}).textContent || '';
+
+    // ---------- 1. 冰箱里只有调料 ----------
+    S().items = S().items.filter(i => i.cat === '调料');
+    S().plans = {};
+    render();
+    const seasonCount = S().items.length;
+    ok('已清空食材，只剩调料', seasonCount >= 10, seasonCount);
+
+    const headTxt = text('.fs-head');
+    ok('首页标题显示能做 0 道', /能做 0 道/.test(headTxt), headTxt.replace(/\s+/g, ' ').slice(0, 60));
+    ok('门上「能做啥」也是 0 道', /0\s*道/.test(text('.note-b')), text('.note-b').replace(/\s+/g, ' '));
+
+    // 今天页
+    click('[data-act="nav"][data-v="today"]');
+    ok('今天页无菜品推荐', d.querySelectorAll('.rec-card').length === 0, d.querySelectorAll('.rec-card').length);
+    ok('今天页显示放食材引导', !!d.querySelector('.rec-guide'), text('.rec-guide').slice(0, 40));
+
+    // 点菜抽屉：推荐为空 + 提示
+    click('[data-act="open-pick"]');
+    ok('点菜推荐列表为空', d.querySelectorAll('#pickList .pick-row').length === 0, d.querySelectorAll('#pickList .pick-row').length);
+    ok('点菜空态给出解释', text('#pickList').includes('调料不算数'), text('#pickList').slice(0, 50));
+    // 全部 tab 依然可以浏览（主动搜索/浏览不受限）
+    click('[data-act="pick-tab"][data-m="全部"]');
+    ok('「全部」仍可浏览菜谱', d.querySelectorAll('#pickList .pick-row').length > 20);
+    click('[data-act="close-sheet"]');
+
+    // 菜谱册「可做」应为空
+    click('[data-act="nav"][data-v="recipes"]');
+    ok('菜谱册可做为 0', d.querySelectorAll('#libList .pick-row').length === 0, d.querySelectorAll('#libList .pick-row').length);
+
+    // ---------- 2. 三杯鸡陷阱：姜+大蒜不能撑起一道菜 ----------
+    const threeCup = w.W2E.RECIPES.find(r => r.name === '三杯鸡');
+    ok('三杯鸡主料含姜蒜', threeCup && threeCup.ing.some(i => i.n === '大蒜'));
+
+    // ---------- 3. 放进番茄 + 鸡蛋 ----------
+    click('[data-act="nav"][data-v="fridge"]');
+    const add = (name, qty, unit, cat) => {
+      S().items.unshift({ id: 'x' + name, name, cat: cat || '食材', qty, unit, expire: null, addedAt: '2026-11-02' });
+    };
+    add('番茄', 3, '个'); add('鸡蛋', 6, '个');
+    render();
+    ok('有了食材后「能做」不再是 0', !/能做 0 道/.test(text('.fs-head')), text('.fs-head').replace(/\s+/g, ' ').slice(0, 40));
+
+    let recNames = [];
+    click('[data-act="nav"][data-v="today"]');
+    recNames = Array.from(d.querySelectorAll('.rec-card h4')).map(x => x.textContent);
+    ok('推荐里出现番茄炒蛋', recNames.includes('番茄炒蛋'), recNames.join(','));
+    ok('推荐里没有光靠调料的菜', !recNames.includes('三杯鸡'), recNames.join(','));
+    ok('推荐条数受控', recNames.length > 0 && recNames.length <= 8, recNames.length);
+
+    // 菜谱详情：主料齐 + 调料标注
+    click('.rec-card');
+    const sheet = text('.sheet-body');
+    ok('详情显示主料齐了', sheet.includes('主料齐了'), sheet.slice(0, 60));
+    ok('详情标注了调料/辅料', sheet.includes('调料') || sheet.includes('辅料'));
+
+    const out2 = [];
+    out2.push('pass=' + pass + ' fail=' + fail);
+    out2.push(...log);
+    out.textContent = out2.join('\n');
+  } catch (e) {
+    out.textContent = 'ERROR ' + e.message + '\n' + e.stack + '\n' + log.join('\n');
+  }
+}
+</script>
+</body></html>
